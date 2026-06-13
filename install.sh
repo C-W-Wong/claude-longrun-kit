@@ -2,7 +2,17 @@
 # Claude Code long-run recovery kit - idempotent installer (macOS launchd / Linux systemd).
 # Re-run safely anytime; existing settings are merged, never replaced.
 set -euo pipefail
-cd "$(dirname "$0")"
+
+# Bootstrap: support `curl -fsSL .../install.sh | bash` - if the kit files are not
+# sitting next to this script, download the repo tarball to a temp dir and install from there.
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo .)"
+if [ ! -f "$SRC_DIR/hooks/longrun" ]; then
+  echo "Kit files not found locally - downloading https://github.com/C-W-Wong/claude-longrun-kit ..."
+  TMP="$(mktemp -d)"
+  curl -fsSL https://github.com/C-W-Wong/claude-longrun-kit/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP"
+  SRC_DIR="$TMP/claude-longrun-kit-main"
+fi
+cd "$SRC_DIR"
 echo "== claude-longrun-kit install =="
 
 for dep in jq tmux claude; do

@@ -6,14 +6,61 @@ If you run multi-hour (10h+) agent workflows in [Claude Code](https://claude.com
 
 ## Install
 
+### Step 0 — prerequisites
+
+**Claude Code CLI** (skip if `claude --version` already works):
+
 ```bash
-git clone <this-repo> && cd claude-longrun-kit
+# macOS / Linux / WSL — official native installer
+curl -fsSL https://claude.ai/install.sh | bash
+
+# or via npm (needs Node 18+)
+npm install -g @anthropic-ai/claude-code
+```
+
+Then run `claude` once in any folder and complete the login flow.
+
+**jq and tmux** (the kit's only other dependencies — jq for all JSON handling, tmux to host the auto-spawned recovery session, which must be an interactive long-lived terminal app):
+
+```bash
+# macOS
+brew install jq tmux
+
+# Debian / Ubuntu
+sudo apt-get install -y jq tmux
+```
+
+### Step 1 — install the kit
+
+One-liner (downloads this repo and installs):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/C-W-Wong/claude-longrun-kit/main/install.sh | bash
+```
+
+Or clone first (nicer if you want `git pull && ./install.sh` updates later):
+
+```bash
+git clone https://github.com/C-W-Wong/claude-longrun-kit.git
+cd claude-longrun-kit
 ./install.sh
 ```
 
-- Idempotent — safe to re-run anytime; it **merges** into your existing `~/.claude/settings.json` (via `jq`) and never overwrites your settings.
-- Dependencies: `jq`, `tmux`, and a logged-in `claude` CLI.
-- macOS (launchd) and Linux (systemd user timer) supported.
+Either way the installer is **idempotent** — safe to re-run anytime; it **merges** into your existing `~/.claude/settings.json` (via `jq`) and never overwrites your settings. macOS (launchd) and Linux (systemd user timer) supported; Windows isn't (WSL with systemd works).
+
+What it installs: 5 scripts → `~/.claude/hooks/`, the `longrun` CLI → `~/.local/bin/` (make sure that's on your PATH), 2 hook entries → `~/.claude/settings.json`, a protocol section → `~/.claude/CLAUDE.md`, and the 30-min OS heartbeat (launchd/systemd).
+
+### Step 2 — verify
+
+```bash
+longrun status                              # fresh install correctly says: no long-run state file
+launchctl list | grep longrun               # macOS → com.claude.longrun-heartbeat
+systemctl --user list-timers | grep longrun # Linux  → claude-longrun-heartbeat.timer
+```
+
+### Step 3 — use it
+
+Launch your long task in Claude Code and add one sentence: **"make this run self-healing — auto-resume if it gets interrupted."** Claude then arms the pipeline (`autoResume: true`), and every interruption (usage limit, API error, killed session, reboot) heals itself. Say nothing → interruptions halt cleanly and wait for you. Control anytime with `longrun arm | disarm | done`.
 
 ## How it works — four layers
 
