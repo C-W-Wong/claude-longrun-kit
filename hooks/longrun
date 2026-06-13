@@ -1,8 +1,10 @@
 #!/bin/bash
 # User control for long-run pipeline recovery.
-#   longrun                      list all pipelines
-#   longrun status [id]          list all, or full JSON of one
+#   longrun                      list all pipelines (table)
+#   longrun status [id]          list all, or formatted detail of one (add --json for raw)
 #   longrun arm|disarm|done|reopen [id]   mutate one (id optional when only one exists; prefix match ok)
+#   longrun attach               attach to the live recovery tmux session
+#   longrun version              print the installed kit version SHA
 #   longrun log [n]              tail the OS heartbeat log
 D="$HOME/.claude/long-run-state"
 LEGACY="$HOME/.claude/long-run-state.json"
@@ -11,12 +13,132 @@ if [ -f "$LEGACY" ]; then
   slug=$(basename "$(jq -r '.project // "pipeline"' "$LEGACY" 2>/dev/null)" 2>/dev/null) || slug=pipeline
   mv "$LEGACY" "$D/${slug}.json"
 fi
-list() {
-  ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines"; return 0; }
-  for f in "$D"/*.json; do
-    jq -r '"\(input_filename | split("/")[-1] | rtrimstr(".json"))   status=\(.status)   armed=\(.autoResume // false)   \((.currentPhase // "")[0:70])"' "$f"
-  done
+
+# ---- presentation helpers -------------------------------------------------
+# Color only when stdout is a TTY; otherwise emit plain text so pipes/logs stay clean.
+if [ -t 1 ]; then
+  C_RESET=$'\033[0m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'
+  C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+else
+  C_RESET=''; C_GREEN=''; C_YELLOW=''; C_DIM=''; C_BOLD=''
+fi
+# color STATE colorize a derived state word
+color_state() {
+  case "$1" in
+    running) printf '%s' "${C_GREEN}$1${C_RESET}" ;;
+    halted)  printf '%s' "${C_YELLOW}$1${C_RESET}" ;;
+    done)    printf '%s' "${C_DIM}$1${C_RESET}" ;;
+    *)       printf '%s' "$1" ;;
+  esac
 }
+# portable file mtime in epoch seconds.
+# BSD/macOS stat uses -f %m; GNU stat uses -c %Y (and treats -f as --file-system,
+# so guard the BSD result to a bare integer before falling back to GNU).
+mtime() {
+  local m
+  m=$(stat -f %m "$1" 2>/dev/null)
+  case "$m" in (*[!0-9]*|'') m=$(stat -c %Y "$1" 2>/dev/null) ;; esac
+  printf '%s' "$m"
+}
+# relative time from an epoch-seconds value to now
+rel_time() {
+  local then now d
+  then="$1"; now=$(date +%s)
+  case "$then" in (*[!0-9]*|'') echo "—"; return 0 ;; esac
+  d=$((now - then))
+  if   [ "$d" -lt 60 ];    then echo "just now"
+  elif [ "$d" -lt 3600 ];  then echo "$((d / 60))m ago"
+  elif [ "$d" -lt 86400 ]; then echo "$((d / 3600))h ago"
+  else echo "$((d / 86400))d ago"
+  fi
+}
+# derive display state from status + nextResetEpoch
+derive_state() {
+  # $1=status  $2=nextResetEpoch
+  if [ "$1" = "done" ]; then echo done
+  elif [ -n "$2" ] && [ "$2" != "null" ]; then echo halted
+  else echo running
+  fi
+}
+# format an epoch-seconds value as local time (portable BSD/GNU)
+fmt_epoch() {
+  date -r "$1" "+%-l:%M%p" 2>/dev/null || date -d "@$1" "+%-l:%M%p" 2>/dev/null
+}
+
+list() {
+  ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines tracked yet"; return 0; }
+  local n_run=0 n_halt=0 n_done=0 n_armed=0 rows
+  rows=$(printf 'PIPELINE\tSTATE\tARMED\tNEXT RESUME\tUPDATED\tPHASE\n')
+  # loop in the current shell (no subshell pipe) so the tallies survive
+  local f id status armed nextEpoch nextAt phase state armedTxt nextTxt updated
+  for f in "$D"/*.json; do
+    id=$(basename "$f" .json)
+    status=$(jq -r '.status // "running"' "$f" 2>/dev/null)
+    armed=$(jq -r '.autoResume // false' "$f" 2>/dev/null)
+    nextEpoch=$(jq -r '.nextResetEpoch // empty' "$f" 2>/dev/null)
+    nextAt=$(jq -r '.nextResetAt // empty' "$f" 2>/dev/null)
+    phase=$(jq -r '(.currentPhase // "")[0:50]' "$f" 2>/dev/null)
+    state=$(derive_state "$status" "$nextEpoch")
+    # tally
+    case "$state" in
+      running) n_run=$((n_run + 1)) ;;
+      halted)  n_halt=$((n_halt + 1)) ;;
+      done)    n_done=$((n_done + 1)) ;;
+    esac
+    if [ "$armed" = "true" ]; then
+      armedTxt="${C_BOLD}yes${C_RESET}"
+      [ "$state" != "done" ] && n_armed=$((n_armed + 1))
+    else
+      armedTxt="no"
+    fi
+    # next resume
+    if [ -n "$nextAt" ]; then nextTxt="$nextAt"
+    elif [ -n "$nextEpoch" ]; then nextTxt=$(fmt_epoch "$nextEpoch"); [ -z "$nextTxt" ] && nextTxt="—"
+    else nextTxt="—"
+    fi
+    updated=$(rel_time "$(mtime "$f")")
+    rows="$rows"$(printf '\n%s\t%s\t%s\t%s\t%s\t%s' \
+      "$id" "$(color_state "$state")" "$armedTxt" "$nextTxt" "$updated" "$phase")
+  done
+  printf '%s\n' "$rows" | { command -v column >/dev/null 2>&1 && column -t -s$'\t' || cat; }
+  # footer summary
+  local rec
+  if tmux has-session -t claude-longrun 2>/dev/null; then rec=live; else rec=none; fi
+  echo
+  echo "${n_run} running · ${n_halt} halted (${n_armed} armed) · ${n_done} done   |   recovery session: ${rec}"
+}
+
+# formatted single-pipeline detail block
+detail() {
+  local f="$1" id status nextEpoch nextAt state armed project runId script phase proto updated nextTxt
+  id=$(basename "$f" .json)
+  status=$(jq -r '.status // "running"' "$f" 2>/dev/null)
+  nextEpoch=$(jq -r '.nextResetEpoch // empty' "$f" 2>/dev/null)
+  nextAt=$(jq -r '.nextResetAt // empty' "$f" 2>/dev/null)
+  state=$(derive_state "$status" "$nextEpoch")
+  armed=$(jq -r 'if .autoResume then "yes" else "no" end' "$f" 2>/dev/null)
+  project=$(jq -r '.project // "—"' "$f" 2>/dev/null)
+  runId=$(jq -r '.runId // "—"' "$f" 2>/dev/null)
+  script=$(jq -r '.scriptPath // "—"' "$f" 2>/dev/null)
+  phase=$(jq -r '.currentPhase // "—"' "$f" 2>/dev/null)
+  proto=$(jq -r '.resumeProtocol // "—"' "$f" 2>/dev/null)
+  updated=$(rel_time "$(mtime "$f")")
+  if [ -n "$nextAt" ]; then nextTxt="$nextAt"
+  elif [ -n "$nextEpoch" ]; then nextTxt=$(fmt_epoch "$nextEpoch"); [ -z "$nextTxt" ] && nextTxt="—"
+  else nextTxt="—"
+  fi
+  printf '%s%s%s\n' "$C_BOLD" "$id" "$C_RESET"
+  printf '  State            %s\n' "$(color_state "$state")"
+  printf '  Armed            %s\n' "$armed"
+  printf '  Project          %s\n' "$project"
+  printf '  Run ID           %s\n' "$runId"
+  printf '  Script           %s\n' "$script"
+  printf '  Phase            %s\n' "$phase"
+  printf '  Next resume      %s\n' "$nextTxt"
+  printf '  Updated          %s\n' "$updated"
+  printf '  Resume protocol  %s\n' "$proto"
+}
+
 resolve() {
   local matches n
   if [ -n "${1:-}" ]; then matches=$(ls "$D"/"$1"*.json 2>/dev/null); else matches=$(ls "$D"/*.json 2>/dev/null); fi
@@ -28,7 +150,22 @@ resolve() {
 mut() { jq "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"; }
 cmd="${1:-status}"
 case "$cmd" in
-  status) if [ -n "${2:-}" ]; then f=$(resolve "$2") || exit 1; jq . "$f"; else list; fi
+  status) # collect args after the subcommand: optional id, optional --json (in any order)
+          want_json=0; sid=""
+          for a in "${@:2}"; do
+            case "$a" in
+              --json) want_json=1 ;;
+              *) [ -z "$sid" ] && sid="$a" ;;
+            esac
+          done
+          if [ -n "$sid" ]; then
+            f=$(resolve "$sid") || exit 1
+            if [ "$want_json" = "1" ]; then jq . "$f"; else detail "$f"; fi
+          elif [ "$want_json" = "1" ]; then
+            for f in "$D"/*.json; do [ -e "$f" ] && jq . "$f"; done
+          else
+            list
+          fi
           bash "$HOME/.claude/hooks/long-run-update-check.sh" 2>/dev/null || true ;;
   arm)    f=$(resolve "${2:-}") || exit 1; mut '.autoResume=true' "$f"
           id=$(basename "$f" .json)
@@ -40,6 +177,18 @@ case "$cmd" in
   disarm) f=$(resolve "${2:-}") || exit 1; mut '.autoResume=false' "$f" && echo "disarmed $(basename "$f" .json): halts stay halted until you act" ;;
   done)   f=$(resolve "${2:-}") || exit 1; mut '.status="done"' "$f" && echo "marked done: $(basename "$f" .json) (undo: longrun reopen $(basename "$f" .json))" ;;
   reopen) f=$(resolve "${2:-}") || exit 1; mut '.status="running"' "$f" && echo "reopened $(basename "$f" .json): status back to \"running\", recovery layers active again" ;;
+  attach) if tmux has-session -t claude-longrun 2>/dev/null; then
+            exec tmux attach -t claude-longrun
+          else
+            echo "no live recovery session right now"
+          fi ;;
+  version) vf="$HOME/.claude/.longrun-kit-version"
+           if [ -f "$vf" ]; then
+             v=$(head -c 7 "$vf" 2>/dev/null)
+             echo "claude-longrun-kit ${v:-unknown}"
+           else
+             echo "claude-longrun-kit version unknown (no $vf - not installed via the standard installer?)"
+           fi ;;
   log)    tail -n "${2:-30}" "$HOME/.claude/long-run-heartbeat.log" 2>/dev/null || echo "no heartbeat log yet" ;;
   help|-h|--help|*) cat <<'EOF'
 usage: longrun <command> [args]
@@ -49,13 +198,21 @@ Manage self-healing for long-running Claude Code pipelines
 one JSON file per pipeline.
 
 commands:
-  status [id]    List all pipelines; with an id, print that one in full
+  status [id]    List all pipelines; with an id, show that one in detail
+                 (add --json for the raw state JSON)
   arm    [id]    Enable auto-resume: interruptions revive automatically
   disarm [id]    Disable auto-resume: halts wait for you (still listed)
   done   [id]    Mark a pipeline finished - silences every recovery layer
   reopen [id]    Undo an accidental done - status back to "running"
+  attach         Attach to the live recovery session (tmux)
+  version        Print the installed kit version SHA
   log    [n]     Tail the OS heartbeat log (default: 30 lines)
   help           Show this help
+
+states (derived for display):
+  running        actively working
+  halted         parked, waiting for a usage-reset window
+  done           finished; recovery silenced
 
 notes:
   - [id] may be omitted when exactly one pipeline exists; prefix match is
@@ -63,7 +220,7 @@ notes:
   - Auto-resume is opt-in PER PIPELINE; nothing is ever resumed unless armed.
   - Recoveries are serialized (one at a time) - parallel revivals would only
     race the shared usage quota.
-  - Watch a live auto-recovery session:  tmux attach -t claude-longrun
+  - Watch a live auto-recovery session:  longrun attach
 EOF
   ;;
 esac
