@@ -83,10 +83,11 @@ Auto-resume is **opt-in per pipeline**, never global:
 Manual override anytime:
 
 ```bash
-longrun status    # inspect the current pipeline state
+longrun status    # inspect the current pipeline state (+ update notice if any)
 longrun arm       # enable auto-resume for it
 longrun disarm    # halts stay halted until you act
 longrun done      # mark finished — silences every layer
+longrun reopen    # undo an accidental `done`: status back to running
 longrun log       # tail the OS heartbeat log
 ```
 

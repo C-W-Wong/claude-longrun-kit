@@ -1,13 +1,20 @@
 #!/bin/bash
-# User control for long-run pipeline recovery: longrun [status|arm|disarm|done|log]
+# User control for long-run pipeline recovery: longrun [status|arm|disarm|done|reopen|log]
 F="$HOME/.claude/long-run-state.json"
-mut() { jq "$1" "$F" > "$F.tmp" && mv "$F.tmp" "$F"; }
+mut() { [ -f "$F" ] || { echo "no long-run state file"; exit 1; }; jq "$1" "$F" > "$F.tmp" && mv "$F.tmp" "$F"; }
 case "${1:-status}" in
   status) if [ -f "$F" ]; then jq . "$F"; else echo "no long-run state file"; fi
           bash "$HOME/.claude/hooks/long-run-update-check.sh" 2>/dev/null || true ;;
-  arm)    mut '.autoResume=true'  && echo "armed: heartbeat will auto-resume this pipeline" ;;
+  arm)    mut '.autoResume=true'
+          if [ "$(jq -r .status "$F")" = "done" ]; then
+            echo "armed - but status is \"done\", so every recovery layer stays silent."
+            echo "if the pipeline is actually still running or halted: longrun reopen"
+          else
+            echo "armed: heartbeat will auto-resume this pipeline"
+          fi ;;
   disarm) mut '.autoResume=false' && echo "disarmed: pipeline halts stay halted until you act" ;;
-  done)   mut '.status="done"'    && echo "marked done: all recovery layers silenced" ;;
+  done)   mut '.status="done"'    && echo "marked done: all recovery layers silenced (undo: longrun reopen)" ;;
+  reopen) mut '.status="running"' && echo "reopened: status back to \"running\", recovery layers active again" ;;
   log)    tail -n "${2:-30}" "$HOME/.claude/long-run-heartbeat.log" 2>/dev/null || echo "no heartbeat log yet" ;;
-  *)      echo "usage: longrun [status|arm|disarm|done|log [n]]" ;;
+  *)      echo "usage: longrun [status|arm|disarm|done|reopen|log [n]]" ;;
 esac
