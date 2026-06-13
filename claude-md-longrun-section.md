@@ -1,3 +1,4 @@
+<!-- claude-longrun-kit:begin -->
 ## Long-run recovery (10h+ pipelines vs 5h usage-limit windows)
 
 Apply whenever launching a workflow/pipeline that may outlive one usage-limit window (>1h of agent work). Triggers are enforced by hooks: PostToolUse(Workflow) reminds about this checklist after every launch; SessionStart surfaces `~/.claude/long-run-state.json` when a pipeline is unfinished; an OS-level launchd/systemd heartbeat covers dead sessions.
@@ -9,3 +10,4 @@ Apply whenever launching a workflow/pipeline that may outlive one usage-limit wi
 4. **Working-tree rule on resume**: halted at VERIFY/COMMIT stage → KEEP the tree (the implementer's result is journal-cached; the verifier needs the uncommitted changes). Halted with a CODER dead mid-edit → `git restore` the partial paths to HEAD first. Resume method depends on session: SAME session → `Workflow {scriptPath, resumeFromRunId}` (journal cache, nothing redone). NEW session → the journal is unavailable: determine completed units from the work-order Done/ folder + git log, remove them from the workflow script's unit list, and launch as a fresh run.
 5. **Detail lives in project memory** (unit/batch progress, skip lists, environment facts); the state file is a cross-project pointer, not the database.
 6. **Portable setup**: the whole mechanism (hooks, scripts, launchd/systemd timer, this section) installs on any machine via the claude-longrun-kit repo (`./install.sh`, idempotent).
+<!-- claude-longrun-kit:end -->

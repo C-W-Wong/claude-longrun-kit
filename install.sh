@@ -43,12 +43,20 @@ echo "settings.json hooks merged"
 
 C="$HOME/.claude/CLAUDE.md"
 touch "$C"
-if ! grep -q "## Long-run recovery" "$C"; then
+B="<!-- claude-longrun-kit:begin -->"
+E="<!-- claude-longrun-kit:end -->"
+if grep -qF "$B" "$C"; then
+  # managed section exists: replace it in place so protocol text upgrades with the kit
+  awk -v b="$B" -v e="$E" 'index($0,b){skip=1; next} index($0,e){skip=0; next} !skip{print}' "$C" > "$C.tmp" && mv "$C.tmp" "$C"
+  cat claude-md-longrun-section.md >> "$C"
+  echo "CLAUDE.md section updated to this kit version"
+elif grep -q "## Long-run recovery" "$C"; then
+  echo "WARN: CLAUDE.md contains an unmanaged 'Long-run recovery' section (pre-marker install)."
+  echo "      Delete it and re-run ./install.sh to switch to the auto-updating managed section."
+else
   printf '\n' >> "$C"
   cat claude-md-longrun-section.md >> "$C"
   echo "CLAUDE.md section appended"
-else
-  echo "CLAUDE.md section already present"
 fi
 
 if [ "$(uname -s)" = "Darwin" ]; then
