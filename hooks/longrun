@@ -3,7 +3,8 @@
 F="$HOME/.claude/long-run-state.json"
 mut() { jq "$1" "$F" > "$F.tmp" && mv "$F.tmp" "$F"; }
 case "${1:-status}" in
-  status) if [ -f "$F" ]; then jq . "$F"; else echo "no long-run state file"; fi ;;
+  status) if [ -f "$F" ]; then jq . "$F"; else echo "no long-run state file"; fi
+          bash "$HOME/.claude/hooks/long-run-update-check.sh" 2>/dev/null || true ;;
   arm)    mut '.autoResume=true'  && echo "armed: heartbeat will auto-resume this pipeline" ;;
   disarm) mut '.autoResume=false' && echo "disarmed: pipeline halts stay halted until you act" ;;
   done)   mut '.status="done"'    && echo "marked done: all recovery layers silenced" ;;

@@ -20,10 +20,23 @@ for dep in jq tmux claude; do
 done
 
 mkdir -p "$HOME/.claude/hooks" "$HOME/.local/bin"
-cp hooks/long-run-launch-reminder.sh hooks/long-run-session-start.sh hooks/long-run-os-heartbeat.sh hooks/long-run-recovery-launch.sh hooks/longrun "$HOME/.claude/hooks/"
-chmod +x "$HOME/.claude/hooks/long-run-launch-reminder.sh" "$HOME/.claude/hooks/long-run-session-start.sh" "$HOME/.claude/hooks/long-run-os-heartbeat.sh" "$HOME/.claude/hooks/long-run-recovery-launch.sh" "$HOME/.claude/hooks/longrun"
+cp hooks/long-run-launch-reminder.sh hooks/long-run-session-start.sh hooks/long-run-os-heartbeat.sh hooks/long-run-recovery-launch.sh hooks/long-run-update-check.sh hooks/longrun "$HOME/.claude/hooks/"
+chmod +x "$HOME/.claude/hooks/long-run-launch-reminder.sh" "$HOME/.claude/hooks/long-run-session-start.sh" "$HOME/.claude/hooks/long-run-os-heartbeat.sh" "$HOME/.claude/hooks/long-run-recovery-launch.sh" "$HOME/.claude/hooks/long-run-update-check.sh" "$HOME/.claude/hooks/longrun"
 ln -sf "$HOME/.claude/hooks/longrun" "$HOME/.local/bin/longrun"
 echo "hooks + longrun CLI installed"
+
+# Stamp the installed version for the notify-only update check
+KIT_SHA=""
+if command -v git >/dev/null 2>&1 && git rev-parse HEAD >/dev/null 2>&1; then
+  KIT_SHA=$(git rev-parse HEAD)
+else
+  KIT_SHA=$(curl -fsSL --max-time 5 https://api.github.com/repos/C-W-Wong/claude-longrun-kit/commits/main 2>/dev/null | jq -r '.sha // empty' 2>/dev/null || true)
+fi
+if [ -n "$KIT_SHA" ]; then
+  echo "$KIT_SHA" > "$HOME/.claude/.longrun-kit-version"
+  rm -f "$HOME/.claude/.longrun-kit-update-check"
+  echo "installed version stamped: ${KIT_SHA:0:7}"
+fi
 
 S="$HOME/.claude/settings.json"
 [ -f "$S" ] || echo '{}' > "$S"

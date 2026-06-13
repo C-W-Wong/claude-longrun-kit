@@ -12,6 +12,7 @@ LOCK="$HOME/.claude/long-run-heartbeat.lock"
 STALE_SECS=5400   # spawned recovery session with no state-file progress for 90 min = stuck
 exec >>"$LOG" 2>&1
 ts() { date "+%F %T"; }
+bash "$HOME/.claude/hooks/long-run-update-check.sh" 2>/dev/null || true
 [ -f "$F" ] || exit 0
 jq -e . "$F" >/dev/null 2>&1 || { echo "$(ts) state file invalid JSON - skip"; exit 0; }
 [ "$(jq -r '.status' "$F")" = "running" ] || exit 0

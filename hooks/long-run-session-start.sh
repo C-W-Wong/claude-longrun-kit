@@ -12,4 +12,6 @@ if [ "$armed" = "true" ]; then
 else
   g="This pipeline is NOT armed (autoResume:false): do NOT auto-resume anything. Briefly inform the user that this halted pipeline exists and await their instruction (user controls: longrun arm | disarm | done)."
 fi
-jq -n --slurpfile s "$f" --arg g "$g" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("[long-run-recovery] Unfinished long-run pipeline recorded in ~/.claude/long-run-state.json: " + ($s[0]|tojson) + " -- " + $g + " Full protocol: ~/.claude/CLAUDE.md section \"Long-run recovery\". Cross-check project memory before acting; if the state file is stale (pipeline actually finished), set status:done instead.")}}'
+upd=""
+[ -s "$HOME/.claude/.longrun-kit-update-check" ] && upd=" [kit-update notice for the user: $(cat "$HOME/.claude/.longrun-kit-update-check")]"
+jq -n --slurpfile s "$f" --arg g "$g" --arg u "$upd" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("[long-run-recovery] Unfinished long-run pipeline recorded in ~/.claude/long-run-state.json: " + ($s[0]|tojson) + " -- " + $g + " Full protocol: ~/.claude/CLAUDE.md section \"Long-run recovery\". Cross-check project memory before acting; if the state file is stale (pipeline actually finished), set status:done instead." + $u)}}'

@@ -105,6 +105,14 @@ Tunables (edit, then re-run `./install.sh`): firing interval — `StartInterval`
 - The OS-spawned recovery session runs `claude --dangerously-skip-permissions` by default — unattended resume can't stop at permission prompts. Override via env var before install, or edit `hooks/long-run-recovery-launch.sh`: set `CLAUDE_LONGRUN_PERM_FLAGS` (e.g. `--permission-mode acceptEdits`). **Only arm pipelines you trust to run unattended.**
 - The heartbeat acts only when *all* of these hold: state file says `running` + `autoResume: true` + recorded reset time passed + no live `claude` process + no fresh recovery session + not already locked. Everything it does is logged to `~/.claude/long-run-heartbeat.log`.
 
+## Updates — notify-only, never automatic
+
+The kit deliberately does **not** auto-update itself: the recovery session runs with skipped permission prompts, so silently executing fresh code from the network would be a supply-chain hole. Instead, a notify-only check (≤1 GitHub API call per day, 3s timeout, offline-silent) compares your installed commit with `main` and shows a one-line notice in `longrun status`, the heartbeat log, and the session-start context. Upgrading is always the same explicit command as installing:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/C-W-Wong/claude-longrun-kit/main/install.sh | bash
+```
+
 ## Uninstall
 
 ```bash
