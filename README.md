@@ -22,7 +22,7 @@ git clone <this-repo> && cd claude-longrun-kit
 | 1 | **Circuit breaker** (convention) | each workflow script | An agent dying twice (usage limit / terminal API error) halts the run *cleanly at that unit* with partial state — failures never cascade. Claude authors this into scripts per the CLAUDE.md protocol. |
 | 2 | **State file** | `~/.claude/long-run-state.json` | Single source of truth: status, project path, run ID, script path, resume protocol, and the **`autoResume` arm switch**. Written by Claude at launch and at every phase boundary / halt. |
 | 3 | **Claude Code hooks** (2) | `~/.claude/settings.json` | `PostToolUse(Workflow)`: after every workflow launch, reminds the model to scaffold recovery and make the arm decision explicitly. `SessionStart`: every new session learns about an unfinished pipeline — armed → resumes autonomously; unarmed → informs you and waits. Hooks only inject context; they don't act on their own. |
-| 4 | **OS heartbeat** | launchd / systemd timer | Fires at the usage-limit reset grid (+6 min). If an **armed** pipeline is halted **and no `claude` process is alive**, it spawns a recovery session inside tmux (`tmux attach -t claude-longrun` to watch). This is the layer that survives session death and reboots — something Claude Code hooks alone cannot do. |
+| 4 | **OS heartbeat** | launchd / systemd timer | Fires every 30 min — machine-agnostic, zero schedule config. If an **armed** pipeline is halted, the recorded reset time has passed, **and no `claude` process is alive**, it spawns a recovery session inside tmux (`tmux attach -t claude-longrun` to watch). This is the layer that survives session death and reboots — something Claude Code hooks alone cannot do. |
 
 A protocol section appended to `~/.claude/CLAUDE.md` teaches Claude the rest: when to arm (only when the user explicitly asks for unattended execution), how to treat the working tree on resume (keep it if the halt hit verify/commit; restore if an implementer died mid-edit), and how to resume (same session → workflow journal `resumeFromRunId`; new session → drop already-completed units and relaunch fresh).
 
@@ -43,17 +43,20 @@ longrun done      # mark finished — silences every layer
 longrun log       # tail the OS heartbeat log
 ```
 
-## Configure your reset grid
+## Timing — universal by design
 
-Usage-limit windows reset on a fixed 5-hour grid that depends on your account/timezone. When you hit a limit, the error says e.g. `resets 4pm` — your grid is that hour ± 5h steps (default here: 02/07/11/16/21 local, firing at :06).
+Usage-limit windows reset on a 5-hour grid that differs per account and timezone, so the kit never hardcodes it. Instead:
 
-- macOS: edit `launchd.plist.template`, re-run `./install.sh`
-- Linux: edit `systemd/claude-longrun-heartbeat.timer`, re-run `./install.sh`
+1. When a run halts on a limit, the error message names the exact reset time (`resets 4pm`). The Claude session records it in the state file as `nextResetEpoch` (the CLAUDE.md protocol instructs this).
+2. The OS heartbeat fires every 30 minutes on every machine and simply waits until `nextResetEpoch` has passed before acting. Each premature firing exits in milliseconds.
+3. No `nextResetEpoch` recorded (e.g. the session crashed before writing it)? The heartbeat just tries; if the spawned recovery session itself gets stuck on a still-exhausted limit, the stale-session guard kills and respawns it after 90 minutes of no progress.
+
+Tunables (edit, then re-run `./install.sh`): firing interval — `StartInterval` in `launchd.plist.template` / `OnUnitActiveSec` in the systemd timer; stuck threshold — `STALE_SECS` in `hooks/long-run-os-heartbeat.sh`.
 
 ## Security notes
 
 - The OS-spawned recovery session runs `claude --dangerously-skip-permissions` by default — unattended resume can't stop at permission prompts. Override via env var before install, or edit `hooks/long-run-recovery-launch.sh`: set `CLAUDE_LONGRUN_PERM_FLAGS` (e.g. `--permission-mode acceptEdits`). **Only arm pipelines you trust to run unattended.**
-- The heartbeat acts only when *all* of these hold: state file says `running` + `autoResume: true` + no live `claude` process + not already locked. Everything it does is logged to `~/.claude/long-run-heartbeat.log`.
+- The heartbeat acts only when *all* of these hold: state file says `running` + `autoResume: true` + recorded reset time passed + no live `claude` process + no fresh recovery session + not already locked. Everything it does is logged to `~/.claude/long-run-heartbeat.log`.
 
 ## Uninstall
 

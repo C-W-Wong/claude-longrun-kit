@@ -1,8 +1,9 @@
 [Unit]
-Description=Fire claude long-run heartbeat at usage-limit reset grid (+6 min)
+Description=Fire claude long-run heartbeat every 30 min (gated by nextResetEpoch in the state file)
 
 [Timer]
-OnCalendar=*-*-* 02,07,11,16,21:06:00
+OnBootSec=5min
+OnUnitActiveSec=30min
 Persistent=true
 
 [Install]

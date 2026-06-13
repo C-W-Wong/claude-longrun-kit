@@ -46,7 +46,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
   sed "s|__HOME__|$HOME|g" launchd.plist.template > "$P"
   launchctl unload "$P" 2>/dev/null || true
   launchctl load "$P"
-  echo "launchd job loaded: com.claude.longrun-heartbeat (grid 11:06/16:06/21:06/02:06/07:06)"
+  echo "launchd job loaded: com.claude.longrun-heartbeat (every 30 min)"
 else
   mkdir -p "$HOME/.config/systemd/user"
   sed "s|__HOME__|$HOME|g" systemd/claude-longrun-heartbeat.service > "$HOME/.config/systemd/user/claude-longrun-heartbeat.service"
@@ -58,4 +58,4 @@ fi
 
 echo
 echo "Done. Controls: longrun status | arm | disarm | done | log"
-echo "NOTE: adjust the schedule if this machine's usage-limit reset grid differs (default 11/16/21/02/07 local +6min)."
+echo "Timing is universal: the heartbeat fires every 30 min and waits for the exact reset time recorded in the state file (nextResetEpoch) - no per-machine schedule config."
