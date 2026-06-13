@@ -1,0 +1,6 @@
+[Unit]
+Description=Claude long-run pipeline recovery heartbeat
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash __HOME__/.claude/hooks/long-run-os-heartbeat.sh
