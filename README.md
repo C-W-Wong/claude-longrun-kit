@@ -66,12 +66,12 @@ Here's what `longrun status` looks like once a few pipelines are in flight:
 
 ```
 $ longrun status
-PIPELINE        STATE     ARMED  NEXT RESUME   UPDATED   PHASE
-cabinet-a1b2    halted    yes    4:00pm        2h ago    verify: batch 3/7
-docs-9f3c       running   no     —             5m ago    coder: section 4
-api-7e21        done      —      —             1d ago    —
+PIPELINE      STATE    ARMED  NEXT RESUME  UPDATED  PHASE
+cabinet-a1b2  halted   yes    4:00pm       2h ago   verify: batch 3/7
+docs-9f3c     running  no     -            5m ago   coder: section 4
+api-7e21      done     no     -            1d ago   complete
 
-2 running · 1 halted (1 armed) · 1 done   |   recovery session: none
+1 running · 1 halted (1 armed) · 1 done   |   recovery session: none
 ```
 
 The **STATE** column is the thing to read first: `running` = actively working, `halted` = stopped and waiting for the next usage-reset window (this is the state you most want to see — it means the pipeline parked itself cleanly and, if armed, will revive on its own), `done` = finished and silenced across every layer.

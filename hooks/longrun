@@ -44,7 +44,7 @@ mtime() {
 rel_time() {
   local then now d
   then="$1"; now=$(date +%s)
-  case "$then" in (*[!0-9]*|'') echo "—"; return 0 ;; esac
+  case "$then" in (*[!0-9]*|'') echo "-"; return 0 ;; esac
   d=$((now - then))
   if   [ "$d" -lt 60 ];    then echo "just now"
   elif [ "$d" -lt 3600 ];  then echo "$((d / 60))m ago"
@@ -65,12 +65,24 @@ fmt_epoch() {
   date -r "$1" "+%-l:%M%p" 2>/dev/null || date -d "@$1" "+%-l:%M%p" 2>/dev/null
 }
 
+# padcol WIDTH COLORED VISIBLE — print COLORED, then pad with spaces so the
+# visible text occupies WIDTH columns. Padding is computed from VISIBLE (the
+# uncolored text), so embedded ANSI codes never throw the alignment off the
+# way `column -t` does (it counts the escape bytes as visible width).
+padcol() {
+  local w=$1 colored=$2 vis=$3 pad
+  pad=$(( w - ${#vis} ))
+  [ "$pad" -lt 0 ] && pad=0
+  printf '%s%*s' "$colored" "$pad" ""
+}
+
 list() {
   ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines tracked yet"; return 0; }
-  local n_run=0 n_halt=0 n_done=0 n_armed=0 rows
-  rows=$(printf 'PIPELINE\tSTATE\tARMED\tNEXT RESUME\tUPDATED\tPHASE\n')
-  # loop in the current shell (no subshell pipe) so the tallies survive
-  local f id status armed nextEpoch nextAt phase state armedTxt nextTxt updated
+  local n_run=0 n_halt=0 n_done=0 n_armed=0
+  local -a c_id c_state c_statec c_armed c_armedc c_next c_upd c_phase
+  # header lengths seed the column widths (PIPELINE/STATE/ARMED/NEXT RESUME/UPDATED)
+  local w_id=8 w_state=5 w_armed=5 w_next=11 w_upd=7 gap=2
+  local f id status armed nextEpoch nextAt phase state updated nextTxt armedPlain armedCol
   for f in "$D"/*.json; do
     id=$(basename "$f" .json)
     status=$(jq -r '.status // "running"' "$f" 2>/dev/null)
@@ -79,28 +91,47 @@ list() {
     nextAt=$(jq -r '.nextResetAt // empty' "$f" 2>/dev/null)
     phase=$(jq -r '(.currentPhase // "")[0:50]' "$f" 2>/dev/null)
     state=$(derive_state "$status" "$nextEpoch")
-    # tally
     case "$state" in
       running) n_run=$((n_run + 1)) ;;
       halted)  n_halt=$((n_halt + 1)) ;;
       done)    n_done=$((n_done + 1)) ;;
     esac
     if [ "$armed" = "true" ]; then
-      armedTxt="${C_BOLD}yes${C_RESET}"
+      armedPlain=yes; armedCol="${C_BOLD}yes${C_RESET}"
       [ "$state" != "done" ] && n_armed=$((n_armed + 1))
     else
-      armedTxt="no"
+      armedPlain=no; armedCol=no
     fi
     # next resume
     if [ -n "$nextAt" ]; then nextTxt="$nextAt"
-    elif [ -n "$nextEpoch" ]; then nextTxt=$(fmt_epoch "$nextEpoch"); [ -z "$nextTxt" ] && nextTxt="—"
-    else nextTxt="—"
+    elif [ -n "$nextEpoch" ]; then nextTxt=$(fmt_epoch "$nextEpoch"); [ -z "$nextTxt" ] && nextTxt="-"
+    else nextTxt="-"
     fi
     updated=$(rel_time "$(mtime "$f")")
-    rows="$rows"$(printf '\n%s\t%s\t%s\t%s\t%s\t%s' \
-      "$id" "$(color_state "$state")" "$armedTxt" "$nextTxt" "$updated" "$phase")
+    c_id+=("$id");    c_state+=("$state");      c_statec+=("$(color_state "$state")")
+    c_armed+=("$armedPlain"); c_armedc+=("$armedCol")
+    c_next+=("$nextTxt"); c_upd+=("$updated"); c_phase+=("$phase")
+    [ "${#id}"         -gt "$w_id" ]    && w_id=${#id}
+    [ "${#state}"      -gt "$w_state" ] && w_state=${#state}
+    [ "${#armedPlain}" -gt "$w_armed" ] && w_armed=${#armedPlain}
+    [ "${#nextTxt}"    -gt "$w_next" ]  && w_next=${#nextTxt}
+    [ "${#updated}"    -gt "$w_upd" ]   && w_upd=${#updated}
   done
-  printf '%s\n' "$rows" | { command -v column >/dev/null 2>&1 && column -t -s$'\t' || cat; }
+  # header (bold on a TTY), then rows — aligned by hand so color never shifts columns
+  printf '%s' "$C_BOLD"
+  printf '%-*s%-*s%-*s%-*s%-*s%s\n' \
+    "$((w_id + gap))" PIPELINE "$((w_state + gap))" STATE "$((w_armed + gap))" ARMED \
+    "$((w_next + gap))" "NEXT RESUME" "$((w_upd + gap))" UPDATED PHASE
+  printf '%s' "$C_RESET"
+  local i
+  for ((i = 0; i < ${#c_id[@]}; i++)); do
+    padcol "$((w_id + gap))"    "${c_id[i]}"     "${c_id[i]}"
+    padcol "$((w_state + gap))" "${c_statec[i]}" "${c_state[i]}"
+    padcol "$((w_armed + gap))" "${c_armedc[i]}" "${c_armed[i]}"
+    padcol "$((w_next + gap))"  "${c_next[i]}"   "${c_next[i]}"
+    padcol "$((w_upd + gap))"   "${c_upd[i]}"    "${c_upd[i]}"
+    printf '%s\n' "${c_phase[i]}"
+  done
   # footer summary
   local rec
   if tmux has-session -t claude-longrun 2>/dev/null; then rec=live; else rec=none; fi
@@ -117,15 +148,15 @@ detail() {
   nextAt=$(jq -r '.nextResetAt // empty' "$f" 2>/dev/null)
   state=$(derive_state "$status" "$nextEpoch")
   armed=$(jq -r 'if .autoResume then "yes" else "no" end' "$f" 2>/dev/null)
-  project=$(jq -r '.project // "—"' "$f" 2>/dev/null)
-  runId=$(jq -r '.runId // "—"' "$f" 2>/dev/null)
-  script=$(jq -r '.scriptPath // "—"' "$f" 2>/dev/null)
-  phase=$(jq -r '.currentPhase // "—"' "$f" 2>/dev/null)
-  proto=$(jq -r '.resumeProtocol // "—"' "$f" 2>/dev/null)
+  project=$(jq -r '.project // "-"' "$f" 2>/dev/null)
+  runId=$(jq -r '.runId // "-"' "$f" 2>/dev/null)
+  script=$(jq -r '.scriptPath // "-"' "$f" 2>/dev/null)
+  phase=$(jq -r '.currentPhase // "-"' "$f" 2>/dev/null)
+  proto=$(jq -r '.resumeProtocol // "-"' "$f" 2>/dev/null)
   updated=$(rel_time "$(mtime "$f")")
   if [ -n "$nextAt" ]; then nextTxt="$nextAt"
-  elif [ -n "$nextEpoch" ]; then nextTxt=$(fmt_epoch "$nextEpoch"); [ -z "$nextTxt" ] && nextTxt="—"
-  else nextTxt="—"
+  elif [ -n "$nextEpoch" ]; then nextTxt=$(fmt_epoch "$nextEpoch"); [ -z "$nextTxt" ] && nextTxt="-"
+  else nextTxt="-"
   fi
   printf '%s%s%s\n' "$C_BOLD" "$id" "$C_RESET"
   printf '  State            %s\n' "$(color_state "$state")"
