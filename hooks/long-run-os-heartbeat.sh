@@ -14,6 +14,9 @@ MARK="$D/.recovering"
 STALE_SECS=5400   # recovery session with no state-file progress for 90 min = stuck
 LOG_MAX_BYTES=${CLAUDE_LONGRUN_LOG_MAX_BYTES:-262144}    # cap the heartbeat log (256 KB default); keep the tail on overflow
 DONE_RETAIN_DAYS=${CLAUDE_LONGRUN_DONE_RETAIN_DAYS:-14}  # prune done pipelines untouched for this many days (0 = keep forever)
+# A non-numeric override would otherwise silently disable rotation/pruning (and leak a test error); fall back to the default.
+case "$LOG_MAX_BYTES"   in ''|*[!0-9]*) LOG_MAX_BYTES=262144 ;; esac
+case "$DONE_RETAIN_DAYS" in ''|*[!0-9]*) DONE_RETAIN_DAYS=14 ;; esac
 # Rotate BEFORE redirecting: the log appends every pass, so without a cap it grows without bound.
 if [ -f "$LOG" ]; then
   sz=$(stat -c %s "$LOG" 2>/dev/null || stat -f %z "$LOG" 2>/dev/null || echo 0)

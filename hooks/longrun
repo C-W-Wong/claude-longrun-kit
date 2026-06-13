@@ -43,6 +43,7 @@ case "$cmd" in
   reopen) f=$(resolve "${2:-}") || exit 1; mut '.status="running"' "$f" && echo "reopened $(basename "$f" .json): status back to \"running\", recovery layers active again" ;;
   prune)  days="${2:-14}"
           case "$days" in ''|*[!0-9]*) echo "prune: days must be a non-negative integer (got '$days')" >&2; exit 1 ;; esac
+          [ "$days" -eq 0 ] && { echo "prune 0 = keep forever (nothing pruned); pass a positive day count to delete old done pipelines"; exit 0; }
           now=$(date +%s); cutoff=$(( now - days * 86400 )); n=0
           ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines"; exit 0; }
           for f in "$D"/*.json; do
