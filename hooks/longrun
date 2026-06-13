@@ -3,6 +3,7 @@
 #   longrun                      list all pipelines
 #   longrun status [id]          list all, or full JSON of one
 #   longrun arm|disarm|done|reopen [id]   mutate one (id optional when only one exists; prefix match ok)
+#   longrun prune [days]         delete done pipelines untouched for >days (default 14)
 #   longrun log [n]              tail the OS heartbeat log
 D="$HOME/.claude/long-run-state"
 LEGACY="$HOME/.claude/long-run-state.json"
@@ -40,6 +41,15 @@ case "$cmd" in
   disarm) f=$(resolve "${2:-}") || exit 1; mut '.autoResume=false' "$f" && echo "disarmed $(basename "$f" .json): halts stay halted until you act" ;;
   done)   f=$(resolve "${2:-}") || exit 1; mut '.status="done"' "$f" && echo "marked done: $(basename "$f" .json) (undo: longrun reopen $(basename "$f" .json))" ;;
   reopen) f=$(resolve "${2:-}") || exit 1; mut '.status="running"' "$f" && echo "reopened $(basename "$f" .json): status back to \"running\", recovery layers active again" ;;
+  prune)  days="${2:-14}"; now=$(date +%s); cutoff=$(( now - days * 86400 )); n=0
+          ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines"; exit 0; }
+          for f in "$D"/*.json; do
+            [ -e "$f" ] || continue
+            [ "$(jq -r '.status' "$f" 2>/dev/null)" = "done" ] || continue
+            mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "$now")
+            [ "$mt" -lt "$cutoff" ] && rm -f "$f" && { echo "pruned $(basename "$f" .json)"; n=$((n+1)); }
+          done
+          [ "$n" = 0 ] && echo "nothing to prune (no done pipeline untouched >${days}d)" || echo "pruned $n done pipeline(s)" ;;
   log)    tail -n "${2:-30}" "$HOME/.claude/long-run-heartbeat.log" 2>/dev/null || echo "no heartbeat log yet" ;;
   help|-h|--help|*) cat <<'EOF'
 usage: longrun <command> [args]
@@ -54,6 +64,7 @@ commands:
   disarm [id]    Disable auto-resume: halts wait for you (still listed)
   done   [id]    Mark a pipeline finished - silences every recovery layer
   reopen [id]    Undo an accidental done - status back to "running"
+  prune  [days]  Delete done pipelines untouched for >days (default 14)
   log    [n]     Tail the OS heartbeat log (default: 30 lines)
   help           Show this help
 

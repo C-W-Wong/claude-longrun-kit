@@ -89,6 +89,7 @@ longrun arm    [id]       # enable auto-resume for it
 longrun disarm [id]       # halts stay halted until you act
 longrun done   [id]       # mark finished — silences every layer for it
 longrun reopen [id]       # undo an accidental `done`: status back to running
+longrun prune  [days]     # delete done pipelines untouched for >days (default 14)
 longrun log    [n]        # tail the OS heartbeat log
 longrun help              # full reference
 ```
@@ -106,6 +107,15 @@ Usage-limit windows reset on a 5-hour grid that differs per account and timezone
 3. No `nextResetEpoch` recorded (e.g. the session crashed before writing it)? The heartbeat just tries; if the spawned recovery session itself gets stuck on a still-exhausted limit, the stale-session guard kills and respawns it after 90 minutes of no progress.
 
 Tunables (edit, then re-run `./install.sh`): firing interval — `StartInterval` in `launchd.plist.template` / `OnUnitActiveSec` in the systemd timer; stuck threshold — `STALE_SECS` in `hooks/long-run-os-heartbeat.sh`.
+
+## Storage footprint — bounded by design
+
+Nothing the kit writes grows without limit:
+
+- **Heartbeat log** (`~/.claude/long-run-heartbeat.log`) is capped — each pass rotates it down to its last 500 lines once it passes `CLAUDE_LONGRUN_LOG_MAX_BYTES` (256 KB default).
+- **Finished pipelines** are auto-pruned: the heartbeat deletes any `done` state file untouched for `CLAUDE_LONGRUN_DONE_RETAIN_DAYS` (14 by default; set `0` to keep history forever). This also keeps the per-pass scan — and `longrun status` — proportional to *active* pipelines, not your entire run history. Prune on demand with `longrun prune [days]`.
+
+Both knobs are env vars read by `hooks/long-run-os-heartbeat.sh`; set them before install (or edit the defaults at the top of the script). CPU/power cost is negligible regardless: the heartbeat is a 30-min timer, not a daemon, and each idle pass exits in milliseconds.
 
 ## Security notes
 
