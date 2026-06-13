@@ -1,20 +1,69 @@
 #!/bin/bash
-# User control for long-run pipeline recovery: longrun [status|arm|disarm|done|reopen|log]
-F="$HOME/.claude/long-run-state.json"
-mut() { [ -f "$F" ] || { echo "no long-run state file"; exit 1; }; jq "$1" "$F" > "$F.tmp" && mv "$F.tmp" "$F"; }
-case "${1:-status}" in
-  status) if [ -f "$F" ]; then jq . "$F"; else echo "no long-run state file"; fi
+# User control for long-run pipeline recovery.
+#   longrun                      list all pipelines
+#   longrun status [id]          list all, or full JSON of one
+#   longrun arm|disarm|done|reopen [id]   mutate one (id optional when only one exists; prefix match ok)
+#   longrun log [n]              tail the OS heartbeat log
+D="$HOME/.claude/long-run-state"
+LEGACY="$HOME/.claude/long-run-state.json"
+if [ -f "$LEGACY" ]; then
+  mkdir -p "$D"
+  slug=$(basename "$(jq -r '.project // "pipeline"' "$LEGACY" 2>/dev/null)" 2>/dev/null) || slug=pipeline
+  mv "$LEGACY" "$D/${slug}.json"
+fi
+list() {
+  ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines"; return 0; }
+  for f in "$D"/*.json; do
+    jq -r '"\(input_filename | split("/")[-1] | rtrimstr(".json"))   status=\(.status)   armed=\(.autoResume // false)   \((.currentPhase // "")[0:70])"' "$f"
+  done
+}
+resolve() {
+  local matches n
+  if [ -n "${1:-}" ]; then matches=$(ls "$D"/"$1"*.json 2>/dev/null); else matches=$(ls "$D"/*.json 2>/dev/null); fi
+  n=$(printf '%s' "$matches" | grep -c .)
+  if [ "$n" = "1" ]; then printf '%s\n' "$matches"; return 0; fi
+  if [ "$n" = "0" ]; then echo "no matching pipeline${1:+ for id '$1'}" >&2; else { echo "several pipelines - specify an id:"; list; } >&2; fi
+  return 1
+}
+mut() { jq "$1" "$2" > "$2.tmp" && mv "$2.tmp" "$2"; }
+cmd="${1:-status}"
+case "$cmd" in
+  status) if [ -n "${2:-}" ]; then f=$(resolve "$2") || exit 1; jq . "$f"; else list; fi
           bash "$HOME/.claude/hooks/long-run-update-check.sh" 2>/dev/null || true ;;
-  arm)    mut '.autoResume=true'
-          if [ "$(jq -r .status "$F")" = "done" ]; then
-            echo "armed - but status is \"done\", so every recovery layer stays silent."
-            echo "if the pipeline is actually still running or halted: longrun reopen"
+  arm)    f=$(resolve "${2:-}") || exit 1; mut '.autoResume=true' "$f"
+          id=$(basename "$f" .json)
+          if [ "$(jq -r .status "$f")" = "done" ]; then
+            echo "armed $id - but its status is \"done\", so recovery stays silent. If it is actually still running or halted: longrun reopen $id"
           else
-            echo "armed: heartbeat will auto-resume this pipeline"
+            echo "armed $id: heartbeat will auto-resume it"
           fi ;;
-  disarm) mut '.autoResume=false' && echo "disarmed: pipeline halts stay halted until you act" ;;
-  done)   mut '.status="done"'    && echo "marked done: all recovery layers silenced (undo: longrun reopen)" ;;
-  reopen) mut '.status="running"' && echo "reopened: status back to \"running\", recovery layers active again" ;;
+  disarm) f=$(resolve "${2:-}") || exit 1; mut '.autoResume=false' "$f" && echo "disarmed $(basename "$f" .json): halts stay halted until you act" ;;
+  done)   f=$(resolve "${2:-}") || exit 1; mut '.status="done"' "$f" && echo "marked done: $(basename "$f" .json) (undo: longrun reopen $(basename "$f" .json))" ;;
+  reopen) f=$(resolve "${2:-}") || exit 1; mut '.status="running"' "$f" && echo "reopened $(basename "$f" .json): status back to \"running\", recovery layers active again" ;;
   log)    tail -n "${2:-30}" "$HOME/.claude/long-run-heartbeat.log" 2>/dev/null || echo "no heartbeat log yet" ;;
-  *)      echo "usage: longrun [status|arm|disarm|done|reopen|log [n]]" ;;
+  help|-h|--help|*) cat <<'EOF'
+usage: longrun <command> [args]
+
+Manage self-healing for long-running Claude Code pipelines
+(part of claude-longrun-kit). State lives in ~/.claude/long-run-state/,
+one JSON file per pipeline.
+
+commands:
+  status [id]    List all pipelines; with an id, print that one in full
+  arm    [id]    Enable auto-resume: interruptions revive automatically
+  disarm [id]    Disable auto-resume: halts wait for you (still listed)
+  done   [id]    Mark a pipeline finished - silences every recovery layer
+  reopen [id]    Undo an accidental done - status back to "running"
+  log    [n]     Tail the OS heartbeat log (default: 30 lines)
+  help           Show this help
+
+notes:
+  - [id] may be omitted when exactly one pipeline exists; prefix match is
+    accepted when unambiguous (e.g. "longrun arm cabinet").
+  - Auto-resume is opt-in PER PIPELINE; nothing is ever resumed unless armed.
+  - Recoveries are serialized (one at a time) - parallel revivals would only
+    race the shared usage quota.
+  - Watch a live auto-recovery session:  tmux attach -t claude-longrun
+EOF
+  ;;
 esac
