@@ -53,7 +53,7 @@ What it installs: 5 scripts → `~/.claude/hooks/`, the `longrun` CLI → `~/.lo
 ### Step 2 — verify
 
 ```bash
-longrun status                              # fresh install correctly says: no long-run state file
+longrun status                              # fresh install correctly says: no long-run pipelines
 launchctl list | grep longrun               # macOS → com.claude.longrun-heartbeat
 systemctl --user list-timers | grep longrun # Linux  → claude-longrun-heartbeat.timer
 ```
@@ -61,6 +61,20 @@ systemctl --user list-timers | grep longrun # Linux  → claude-longrun-heartbea
 ### Step 3 — use it
 
 Launch your long task in Claude Code and add one sentence: **"make this run self-healing — auto-resume if it gets interrupted."** Claude then arms the pipeline (`autoResume: true`), and every interruption (usage limit, API error, killed session, reboot) heals itself. Say nothing → interruptions halt cleanly and wait for you. Control anytime with `longrun arm | disarm | done`.
+
+Here's what `longrun status` looks like once a few pipelines are in flight:
+
+```
+$ longrun status
+PIPELINE      STATE    ARMED  NEXT RESUME  UPDATED  PHASE
+cabinet-a1b2  halted   yes    4:00pm       2h ago   verify: batch 3/7
+docs-9f3c     running  no     -            5m ago   coder: section 4
+api-7e21      done     no     -            1d ago   complete
+
+1 running · 1 halted (1 armed) · 1 done   |   recovery session: none
+```
+
+The **STATE** column is the thing to read first: `running` = actively working, `halted` = stopped and waiting for the next usage-reset window (this is the state you most want to see — it means the pipeline parked itself cleanly and, if armed, will revive on its own), `done` = finished and silenced across every layer.
 
 ## How it works — four layers
 
@@ -91,6 +105,8 @@ longrun done   [id]       # mark finished — silences every layer for it
 longrun reopen [id]       # undo an accidental `done`: status back to running
 longrun prune  [days]     # delete done pipelines untouched for >days (default 14)
 longrun log    [n]        # tail the OS heartbeat log
+longrun attach            # attach to a live recovery tmux session
+longrun version           # print the installed kit version
 longrun help              # full reference
 ```
 
@@ -130,6 +146,24 @@ The kit deliberately does **not** auto-update itself: the recovery session runs 
 curl -fsSL https://raw.githubusercontent.com/C-W-Wong/claude-longrun-kit/main/install.sh | bash
 ```
 
+## Troubleshooting
+
+- **`longrun: command not found`** → `~/.local/bin` isn't on your PATH. Add it (and reload your shell):
+
+  ```bash
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
+
+  Put that line in your `~/.bashrc` / `~/.zshrc` to make it stick.
+
+- **"My pipeline didn't auto-resume."** Walk the gates the heartbeat checks, in order:
+  - Is it **armed**? `longrun status` should show `ARMED yes` for it (arm it with `longrun arm [id]`).
+  - Has the **reset time passed**? Check the `NEXT RESUME` column — the heartbeat waits until then before acting.
+  - Is another **`claude` process alive**? The heartbeat defers to any live session and won't spawn a recovery while one is running.
+  - Still stuck? Run `longrun log` to see what the last heartbeat pass actually decided.
+
+- **"How do I watch a recovery in progress?"** → `tmux attach -t claude-longrun` (or just `longrun attach`).
+
 ## Uninstall
 
 ```bash
@@ -162,4 +196,3 @@ systemd/                             Linux scheduler (service + timer)
 ## License
 
 MIT
-# claude-longrun-kit
