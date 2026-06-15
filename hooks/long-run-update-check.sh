@@ -9,7 +9,7 @@ CF="$HOME/.claude/.longrun-kit-update-check"
 local_sha=$(cat "$VF")
 now=$(date +%s)
 if [ -f "$CF" ]; then
-  mt=$(stat -f %m "$CF" 2>/dev/null || stat -c %Y "$CF" 2>/dev/null || echo 0)
+  mt=$(stat -c %Y "$CF" 2>/dev/null || stat -f %m "$CF" 2>/dev/null || echo 0)
   if [ $(( now - mt )) -lt 86400 ]; then cat "$CF"; exit 0; fi
 fi
 remote_sha=$(curl -fsSL --max-time 3 https://api.github.com/repos/C-W-Wong/claude-longrun-kit/commits/main 2>/dev/null | jq -r '.sha // empty' 2>/dev/null)

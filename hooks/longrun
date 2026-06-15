@@ -3,6 +3,7 @@
 #   longrun                      list all pipelines (table)
 #   longrun status [id]          list all, or formatted detail of one (add --json for raw)
 #   longrun arm|disarm|done|reopen [id]   mutate one (id optional when only one exists; prefix match ok)
+#   longrun prune [days]         delete done pipelines untouched for >days (default 14)
 #   longrun attach               attach to the live recovery tmux session
 #   longrun version              print the installed kit version SHA
 #   longrun log [n]              tail the OS heartbeat log
@@ -208,6 +209,18 @@ case "$cmd" in
   disarm) f=$(resolve "${2:-}") || exit 1; mut '.autoResume=false' "$f" && echo "disarmed $(basename "$f" .json): halts stay halted until you act" ;;
   done)   f=$(resolve "${2:-}") || exit 1; mut '.status="done"' "$f" && echo "marked done: $(basename "$f" .json) (undo: longrun reopen $(basename "$f" .json))" ;;
   reopen) f=$(resolve "${2:-}") || exit 1; mut '.status="running"' "$f" && echo "reopened $(basename "$f" .json): status back to \"running\", recovery layers active again" ;;
+  prune)  days="${2:-14}"
+          case "$days" in ''|*[!0-9]*) echo "prune: days must be a non-negative integer (got '$days')" >&2; exit 1 ;; esac
+          [ "$days" -eq 0 ] && { echo "prune 0 = keep forever (nothing pruned); pass a positive day count to delete old done pipelines"; exit 0; }
+          now=$(date +%s); cutoff=$(( now - days * 86400 )); n=0
+          ls "$D"/*.json >/dev/null 2>&1 || { echo "no long-run pipelines"; exit 0; }
+          for f in "$D"/*.json; do
+            [ -e "$f" ] || continue
+            [ "$(jq -r '.status' "$f" 2>/dev/null)" = "done" ] || continue
+            mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo "$now")
+            [ "$mt" -lt "$cutoff" ] && rm -f "$f" && { echo "pruned $(basename "$f" .json)"; n=$((n+1)); }
+          done
+          [ "$n" = 0 ] && echo "nothing to prune (no done pipeline untouched >${days}d)" || echo "pruned $n done pipeline(s)" ;;
   attach) if tmux has-session -t claude-longrun 2>/dev/null; then
             exec tmux attach -t claude-longrun
           else
@@ -235,6 +248,7 @@ commands:
   disarm [id]    Disable auto-resume: halts wait for you (still listed)
   done   [id]    Mark a pipeline finished - silences every recovery layer
   reopen [id]    Undo an accidental done - status back to "running"
+  prune  [days]  Delete done pipelines untouched for >days (default 14)
   attach         Attach to the live recovery session (tmux)
   version        Print the installed kit version SHA
   log    [n]     Tail the OS heartbeat log (default: 30 lines)
